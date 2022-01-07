@@ -7,6 +7,12 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: [true, "Please provide an Email!"],
     unique: [true, "Email Exist"],
+    validate: {
+      validator: function (v) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      },
+      message: '{VALUE} is not a valid email!'
+    }
   },
 
   //   password field

@@ -1,10 +1,17 @@
 const express = require("express");
 const app = express();
+const paypal = require('paypal-rest-sdk');
+paypal.configure({
+  'mode': 'sandbox', //sandbox or live
+  'client_id': 'AehM82lvHXDFOgCm22cjOWlJwyPGlTXRJEJOb9Rq0n42NExh4dqthLP6irv-nixwxadP08XH5uWu21y5',
+  'client_secret': 'EBLvEgWv1kZw5WPFjrJf0loqwvxOOk4d4clggnOwtdjNIVKZOfiiQhz6-zktml4NK_0dAQN9PtlDACs_'
+});
 const bodyParser = require("body-parser");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
+
 const auth = require("./auth");
 
+var productsRouter = require('./routes/products');
+var usersRouter = require('./routes/users');
 
 // require database connection
 const dbConnect = require("./db/dbConnect");
@@ -12,6 +19,7 @@ const User = require("./db/userModel");
 
 // execute database connection
 dbConnect();
+
 
 // Curb Cores Error by adding a header here
 app.use((req, res, next) => {
@@ -30,115 +38,86 @@ app.use((req, res, next) => {
 // body parser configuration
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+// app.use(express.urlencoded());
+// app.use(express.json());
 
-app.get("/", (request, response, next) => {
-  response.json({ message: "Hey! This is your server response!" });
-  next();
+app.use('/users', usersRouter);
+app.use('/products', productsRouter);
+
+
+// app.get("/", (request, response, next) => {
+//   response.json({ message: "Hey! This is your server response!" });
+//   next();
+// });
+app.get('/', (req, res) => res.sendFile(__dirname + "/index.html"));
+
+app.post('/pay', (req, res) => {
+  const create_payment_json = {
+    "intent": "sale",
+    "payer": {
+        "payment_method": "paypal"
+    },
+    "redirect_urls": {
+        "return_url": "http://localhost:3000/success",
+        "cancel_url": "http://localhost:3000/cancel"
+    },
+    "transactions": [{
+        "item_list": {
+            "items": [{
+                "name": "Redhock Bar Soap",
+                "sku": "001",
+                "price": "25.00",
+                "currency": "USD",
+                "quantity": 1
+            }]
+        },
+        "amount": {
+            "currency": "USD",
+            "total": "25.00"
+        },
+        "description": "Washing Bar soap"
+    }]
+};
+
+paypal.payment.create(create_payment_json, function (error, payment) {
+  if (error) {
+      throw error;
+  } else {
+      for(let i = 0;i < payment.links.length;i++){
+        if(payment.links[i].rel === 'approval_url'){
+          res.redirect(payment.links[i].href);
+        }
+      }
+  }
 });
 
-// register endpoint
-app.post("/register", (request, response) => {
-  // hash the password
-  bcrypt
-    .hash(request.body.password, 10)
-    .then((hashedPassword) => {
-      // create a new user instance and collect the data
-      const user = new User({
-        email: request.body.email,
-        password: hashedPassword,
-      });
+});
+app.get('/success', (req, res) => {
+  const payerId = req.query.PayerID;
+  const paymentId = req.query.paymentId;
 
-      // save the new user
-      user
-        .save()
-        // return success if the new user is added to the database successfully
-        .then((result) => {
-          response.status(201).send({
-            message: "User Created Successfully",
-            result,
-          });
-        })
-        // catch erroe if the new user wasn't added successfully to the database
-        .catch((error) => {
-          response.status(500).send({
-            message: "Error creating user",
-            error,
-          });
-        });
-    })
-    // catch error if the password hash isn't successful
-    .catch((e) => {
-      response.status(500).send({
-        message: "Password was not hashed successfully",
-        e,
-      });
-    });
+  const execute_payment_json = {
+    "payer_id": payerId,
+    "transactions": [{
+        "amount": {
+            "currency": "USD",
+            "total": "25.00"
+        }
+    }]
+  };
+
+// Obtains the transaction details from paypal
+  paypal.payment.execute(paymentId, execute_payment_json, function (error, payment) {
+      //When error occurs when due to non-existent transaction, throw an error else log the transaction details in the console then send a Success string reposponse to the user.
+    if (error) {
+        console.log(error.response);
+        throw error;
+    } else {
+        console.log(JSON.stringify(payment));
+        res.send('Success');
+    }
+});
 });
 
-// login endpoint
-app.post("/login", (request, response) => {
-  // check if email exists
-  User.findOne({ email: request.body.email })
-
-    // if email exists
-    .then((user) => {
-      // compare the password entered and the hashed password found
-      bcrypt
-        .compare(request.body.password, user.password)
-
-        // if the passwords match
-        .then((passwordCheck) => {
-
-          // check if password matches
-          if(!passwordCheck) {
-            return response.status(400).send({
-              message: "Passwords does not match",
-              error,
-            });
-          }
-
-          //   create JWT token
-          const token = jwt.sign(
-            {
-              userId: user._id,
-              userEmail: user.email,
-            },
-            "RANDOM-TOKEN",
-            { expiresIn: "24h" }
-          );
-
-          //   return success response
-          response.status(200).send({
-            message: "Login Successful",
-            email: user.email,
-            token,
-          });
-        })
-        // catch error if password do not match
-        .catch((error) => {
-          response.status(400).send({
-            message: "Passwords does not match",
-            error,
-          });
-        });
-    })
-    // catch error if email does not exist
-    .catch((e) => {
-      response.status(404).send({
-        message: "Email not found",
-        e,
-      });
-    });
-});
-
-// free endpoint
-app.get("/free-endpoint", (request, response) => {
-  response.json({ message: "You are free to access me anytime" });
-});
-
-// authentication endpoint
-app.get("/auth-endpoint", auth, (request, response) => {
-  response.json({ message: "You are authorized to access me" });
-});
 
 module.exports = app;

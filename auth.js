@@ -18,8 +18,11 @@ module.exports = async (request, response, next) => {
     next();
 
   } catch (error) {
+   
     response.status(401).json({
-      error: new Error("Invalid request!"),
+      status:401,
+      error:"Unauthorized",
+      message:"Auth token is must",
     });
   }
 };
